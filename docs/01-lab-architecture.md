@@ -1,7 +1,7 @@
 # 01 — Lab Architecture
 
 > **Scope:** The full topology of the GoT-themed Active Directory portfolio lab: VMs, networking, domains, trusts, OUs, and resource budget.
-> Codex's `Vagrantfile` (in [`/infrastructure/`](../infrastructure/)) references this document as the canonical source for hostnames, IPs, and resource sizing — keep them in lockstep.
+> The `Vagrantfile` (in [`/infrastructure/`](../infrastructure/)) references this document as the canonical source for hostnames, IPs, and resource sizing — keep them in lockstep.
 
 Related docs: [Environment Setup](00-environment-setup.md) · [Quick Start](02-quick-start.md) · [Troubleshooting](03-troubleshooting.md) · [Cleanup & Reset](04-cleanup-and-reset.md)
 

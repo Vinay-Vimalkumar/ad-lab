@@ -18,7 +18,7 @@ All queries assume the standard Sentinel/Log Analytics schema:
   for Endpoint / Defender for Identity advanced-hunting tables (Entra-joined estate).
 
 > **Log Source Onboarding.** The Sysmon configuration and detection-as-code Sigma rules that
-> feed these queries are Codex-owned and live alongside this file in the `detection/` directory:
+> feed these queries live alongside this file in the `detection/` directory:
 > [`sysmon-config.xml`](./sysmon-config.xml) (Sysmon operational config — process, network,
 > image-load, and LSASS-access logging) and [`sigma-rules/`](./sigma-rules/) (vendor-neutral
 > Sigma source that compiles to these KQL detections). Onboard SecurityEvent via an AMA Data

@@ -2,7 +2,7 @@
 
 > Remediation plan for the **GOAD-style** portfolio lab spanning `sevenkingdoms.local` and its child `north.sevenkingdoms.local` (parent–child trust).
 
-This guide maps each intentionally-vulnerable configuration in the lab to a concrete hardening control. Every control is documented with its rationale, operational impact, the relevant **MITRE ATT&CK Mitigation ID**, a link to the implementation script (owned by Codex under `../infrastructure/provisioning/scripts/hardening/`), a validation method, and the blast radius if the change goes wrong.
+This guide maps each intentionally-vulnerable configuration in the lab to a concrete hardening control. Every control is documented with its rationale, operational impact, the relevant **MITRE ATT&CK Mitigation ID**, a link to the implementation script under `../infrastructure/provisioning/scripts/hardening/`, a validation method, and the blast radius if the change goes wrong.
 
 ## Lab topology being remediated
 
