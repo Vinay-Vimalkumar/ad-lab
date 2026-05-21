@@ -1,0 +1,77 @@
+- name: Verify detections for Phase 3 Attack 01
+  hosts: braavos,kingslanding
+  gather_facts: false
+  tasks:
+    - name: Query braavos Sysmon process creation for SharpHound
+      ansible.windows.win_powershell:
+        script: |
+          $start = (Get-Date).AddHours(-2)
+          $events = Get-WinEvent -FilterHashtable @{
+            LogName = 'Microsoft-Windows-Sysmon/Operational'
+            Id = 1
+            StartTime = $start
+          } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'SharpHound.exe' } |
+            Select-Object -First 10 TimeCreated, Id, ProviderName, MachineName, RecordId, Message
+
+          if ($events) {
+            $events | ConvertTo-Json -Depth 4
+          } else {
+            'No braavos Sysmon Event ID 1 SharpHound.exe records found in the last 2 hours.'
+          }
+      when: inventory_hostname == 'braavos'
+      register: braavos_sysmon
+
+    - name: Show braavos Sysmon detection output
+      ansible.builtin.debug:
+        var: braavos_sysmon.output
+      when: inventory_hostname == 'braavos'
+
+    - name: Query kingslanding Security 4662 directory service access
+      ansible.windows.win_powershell:
+        script: |
+          $start = (Get-Date).AddHours(-2)
+          $events = Get-WinEvent -FilterHashtable @{
+            LogName = 'Security'
+            Id = 4662
+            StartTime = $start
+          } -ErrorAction SilentlyContinue |
+            Select-Object -First 20 TimeCreated, Id, ProviderName, MachineName, RecordId, Message
+
+          if ($events) {
+            $events | ConvertTo-Json -Depth 4
+          } else {
+            'No kingslanding Security Event ID 4662 records found in the last 2 hours.'
+          }
+      when: inventory_hostname == 'kingslanding'
+      register: kingslanding_4662
+
+    - name: Show kingslanding 4662 detection output
+      ansible.builtin.debug:
+        var: kingslanding_4662.output
+      when: inventory_hostname == 'kingslanding'
+
+    - name: Query kingslanding Sysmon process creation for SharpHound expectation check
+      ansible.windows.win_powershell:
+        script: |
+          $start = (Get-Date).AddHours(-2)
+          $events = Get-WinEvent -FilterHashtable @{
+            LogName = 'Microsoft-Windows-Sysmon/Operational'
+            Id = 1
+            StartTime = $start
+          } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'SharpHound.exe' } |
+            Select-Object -First 5 TimeCreated, Id, ProviderName, MachineName, RecordId, Message
+
+          if ($events) {
+            $events | ConvertTo-Json -Depth 4
+          } else {
+            'No kingslanding Sysmon Event ID 1 SharpHound.exe records found; expected because SharpHound executed on braavos.'
+          }
+      when: inventory_hostname == 'kingslanding'
+      register: kingslanding_sysmon
+
+    - name: Show kingslanding Sysmon expectation output
+      ansible.builtin.debug:
+        var: kingslanding_sysmon.output
+      when: inventory_hostname == 'kingslanding'

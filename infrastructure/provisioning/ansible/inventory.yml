@@ -1,0 +1,72 @@
+---
+all:
+  children:
+    windows:
+      hosts:
+        kingslanding:
+          ansible_host: 192.168.56.10
+          lab_hostname: KINGSLANDING
+          lab_dns_servers:
+            - 127.0.0.1
+            - 192.168.56.10
+          lab_domain_name: "{{ lab_root_domain }}"
+          lab_domain_netbios: "{{ lab_root_netbios }}"
+          lab_domain_dn: "{{ lab_root_dn }}"
+        castelblack:
+          ansible_host: 192.168.56.11
+          lab_hostname: CASTELBLACK
+          lab_dns_servers:
+            - 192.168.56.10
+          lab_domain_name: "{{ lab_root_domain }}"
+          lab_domain_netbios: "{{ lab_root_netbios }}"
+          lab_domain_dn: "{{ lab_root_dn }}"
+        winterfell:
+          ansible_host: 192.168.56.12
+          lab_hostname: WINTERFELL
+          lab_dns_servers:
+            - 192.168.56.10
+          lab_domain_name: "{{ lab_child_domain }}"
+          lab_domain_netbios: "{{ lab_child_netbios }}"
+          lab_domain_dn: "{{ lab_child_dn }}"
+        meereen:
+          ansible_host: 192.168.56.13
+          lab_hostname: MEEREEN
+          lab_dns_servers:
+            - 192.168.56.12
+            - 192.168.56.10
+          lab_domain_name: "{{ lab_child_domain }}"
+          lab_domain_netbios: "{{ lab_child_netbios }}"
+          lab_domain_dn: "{{ lab_child_dn }}"
+        braavos:
+          ansible_host: 192.168.56.14
+          lab_hostname: BRAAVOS
+          lab_dns_servers:
+            - 192.168.56.10
+          lab_domain_name: "{{ lab_root_domain }}"
+          lab_domain_netbios: "{{ lab_root_netbios }}"
+          lab_domain_dn: "{{ lab_root_dn }}"
+      vars:
+        ansible_user: "{{ lab_local_admin_user }}"
+        ansible_password: "{{ lab_local_admin_password }}"
+        ansible_connection: winrm
+        ansible_port: 5985
+        ansible_winrm_scheme: http
+        ansible_winrm_transport: credssp
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_operation_timeout_sec: 600
+        ansible_winrm_read_timeout_sec: 900
+    forest_root:
+      hosts:
+        kingslanding:
+    child_domain:
+      hosts:
+        winterfell:
+    domain_members:
+      hosts:
+        castelblack:
+        meereen:
+        braavos:
+    domain_controllers:
+      hosts:
+        kingslanding:
+        winterfell:

@@ -1,0 +1,26 @@
+title: Kerberoasting RC4 Service Ticket Requests
+id: cb5f31fc-6c02-448b-af39-231b95feca75
+status: experimental
+description: Detects RC4-HMAC Kerberos service ticket requests for non-computer SPNs, matching the KQL 4769 Kerberoasting signal.
+references:
+  - /attacks/02-kerberoasting.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.t1558.003
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_rc4_tgs:
+    EventID: 4769
+    TicketEncryptionType: '0x17'
+  filter_computer_or_krbtgt:
+    ServiceName|endswith: '$'
+  filter_krbtgt:
+    ServiceName: krbtgt
+  condition: selection_rc4_tgs and not 1 of filter_*
+falsepositives:
+  - Legacy services or non-Windows Kerberos clients that still request RC4 tickets.
+level: high

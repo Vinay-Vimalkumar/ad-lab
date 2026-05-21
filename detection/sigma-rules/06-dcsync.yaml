@@ -1,0 +1,30 @@
+title: DCSync Directory Replication By Non-DC Account
+id: 3510627e-6839-49f5-9ab2-2fdae8f72217
+status: experimental
+description: Detects directory replication extended rights requested by a non-machine account, mirroring the KQL 4662 DCSync detection.
+references:
+  - /attacks/06-dcsync.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.t1003.006
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_replication_rights:
+    EventID: 4662
+    Properties|contains:
+      - 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2
+      - 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2
+  filter_machine_accounts:
+    SubjectUserName|endswith: '$'
+  filter_sync_accounts:
+    SubjectUserName|startswith:
+      - MSOL_
+      - AAD_
+  condition: selection_replication_rights and not 1 of filter_*
+falsepositives:
+  - Entra Connect, AD migration, or password synchronization accounts with approved replication rights.
+level: critical

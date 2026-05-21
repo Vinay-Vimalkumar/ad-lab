@@ -1,0 +1,90 @@
+---
+- name: Common Windows baseline
+  hosts: all
+  gather_facts: false
+  tags:
+    - common
+  roles:
+    - role: common
+      tags:
+        - common
+
+- name: Build sevenkingdoms.local root forest
+  hosts: forest_root
+  gather_facts: false
+  serial: 1
+  tags:
+    - forest
+    - promotion
+  roles:
+    - role: forest_root
+      tags:
+        - forest
+        - promotion
+
+- name: Build north.sevenkingdoms.local child domain
+  hosts: child_domain
+  gather_facts: false
+  serial: 1
+  tags:
+    - child
+    - promotion
+  roles:
+    - role: child_domain
+      tags:
+        - child
+        - promotion
+
+- name: Join member systems to their assigned domains
+  hosts: domain_members
+  gather_facts: false
+  tags:
+    - join
+  roles:
+    - role: domain_join
+      tags:
+        - join
+
+- name: Seed identity objects on domain controllers
+  hosts: domain_controllers
+  gather_facts: false
+  tags:
+    - identity
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+  roles:
+    - role: users_and_ous
+      tags:
+        - users
+        - identity
+    - role: service_accounts
+      tags:
+        - service_accounts
+        - identity
+    - role: asrep_accounts
+      tags:
+        - asrep
+        - identity
+    - role: delegation_accounts
+      tags:
+        - delegation
+        - identity
+
+- name: Apply intentionally vulnerable domain controls last
+  hosts: domain_controllers
+  gather_facts: false
+  tags:
+    - vulnerabilities
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+  roles:
+    - role: vulnerable_gpos
+      tags:
+        - gpos
+        - vulnerabilities
+    - role: acl_misconfigurations
+      tags:
+        - acls
+        - vulnerabilities

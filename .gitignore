@@ -1,0 +1,83 @@
+# ───────────────────────────────────────────────────────────────
+# AD Lab — .gitignore
+# Owned by the documentation track. Covers Vagrant, Ansible,
+# VirtualBox, captured loot, and editor/OS artifacts.
+# ───────────────────────────────────────────────────────────────
+
+# ── Vagrant ──────────────────────────────────────────────────
+.vagrant/
+*.box
+vagrant.log
+*.retry
+
+# ── VirtualBox ───────────────────────────────────────────────
+*.vbox
+*.vbox-prev
+*.vdi
+*.vmdk
+*.ova
+*.nvram
+VBox.log
+VBox.log.*
+
+# ── Ansible ──────────────────────────────────────────────────
+*.retry
+ansible.log
+provisioning/ansible/*.retry
+provisioning/ansible/fact_cache/
+provisioning/ansible/.vault_pass
+provisioning/ansible/host_vars/*secret*
+provisioning/ansible/group_vars/*secret*
+
+# ── WinRM / WSL / Python tooling ─────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# ── Captured loot / attack output (NEVER commit real creds) ──
+loot/
+*.kirbi
+*.ccache
+*.ntds
+ntds.dit
+*.hashes
+hashes.txt
+*.pot
+hashcat.potfile
+*.secretsdump
+*-bloodhound.zip
+*_bloodhound.json
+*.bhd
+SharpHound*.zip
+
+# ── Screenshots: keep the folder + naming guide, ignore stray temp ─
+screenshots/*.tmp
+screenshots/~$*
+
+# ── Logs & telemetry exports ─────────────────────────────────
+*.evtx
+*.log
+!docs/**/*.log
+
+# ── OS / editor cruft ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Secrets (defense in depth) ───────────────────────────────
+*.pem
+*.key
+*.pfx
+.env
+.env.*
+!.env.example

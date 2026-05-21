@@ -1,0 +1,27 @@
+---
+lab_root_domain: sevenkingdoms.local
+lab_root_netbios: SEVENKINGDOMS
+lab_root_dn: DC=sevenkingdoms,DC=local
+
+lab_child_domain: north.sevenkingdoms.local
+lab_child_label: north
+lab_child_netbios: NORTH
+lab_child_dn: DC=north,DC=sevenkingdoms,DC=local
+
+lab_root_dc_ip: 192.168.56.10
+lab_child_dc_ip: 192.168.56.12
+
+lab_local_admin_user: vagrant
+lab_local_admin_password: "{{ vault_lab_password }}"
+lab_domain_admin_user: labadmin
+lab_password: "{{ vault_lab_password }}"
+lab_domain_admin_password: "{{ vault_lab_password }}"
+lab_safe_mode_password: "{{ vault_lab_password }}"
+lab_default_user_password: "{{ vault_lab_password }}"
+
+lab_forest_mode: WinThreshold
+lab_domain_mode: WinThreshold
+lab_reboot_timeout: 1800
+
+lab_winrm_http_port: 5985
+lab_guest_provisioning_root: 'C:\LabProvisioning'

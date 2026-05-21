@@ -1,0 +1,14 @@
+---
+- name: Apply intentionally vulnerable GPOs and Finance weak password policy
+  ansible.windows.win_command:
+    argv:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - "{{ lab_guest_provisioning_root }}\\scripts\\apply-vulnerable-gpos.ps1"
+      - -Domains
+      - "{{ lab_domain_name }}"
+  register: vulnerable_gpos_result
+  changed_when: true

@@ -1,0 +1,17 @@
+---
+- name: Create Kerberoastable service accounts and SPNs
+  ansible.windows.win_command:
+    argv:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - "{{ lab_guest_provisioning_root }}\\scripts\\create-service-accounts.ps1"
+      - -Domains
+      - "{{ lab_domain_name }}"
+      - -LabPassword
+      - "{{ lab_default_user_password }}"
+  register: service_accounts_result
+  changed_when: true
+  no_log: true

@@ -1,0 +1,57 @@
+- name: Prepare braavos for Phase 3 Windows tools
+  hosts: braavos
+  gather_facts: false
+  tasks:
+    - name: Disable Defender and download requested tools
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = "Continue"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $attackDir = 'C:\attacks'
+          New-Item -ItemType Directory -Path $attackDir -Force | Out-Null
+          Write-Output "Created/verified $attackDir"
+
+          try {
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+            Write-Output "Defender realtime monitoring disabled for lab attack execution."
+          } catch {
+            Write-Output "WARN: Could not disable Defender realtime monitoring: $($_.Exception.Message)"
+          }
+
+          try {
+            Add-MpPreference -ExclusionPath $attackDir -ErrorAction Stop
+            Write-Output "Defender exclusion added for $attackDir."
+          } catch {
+            Write-Output "WARN: Could not add Defender exclusion: $($_.Exception.Message)"
+          }
+
+          $tools = @(
+            @{
+              Name = 'SharpHound.exe'
+              Url = 'https://github.com/BloodHoundAD/BloodHound/raw/master/Collectors/SharpHound.exe'
+              Path = (Join-Path $attackDir 'SharpHound.exe')
+            },
+            @{
+              Name = 'Rubeus.exe'
+              Url = 'https://github.com/GhostPack/Rubeus/releases/download/v2.3.2/Rubeus.exe'
+              Path = (Join-Path $attackDir 'Rubeus.exe')
+            }
+          )
+
+          foreach ($tool in $tools) {
+            Write-Output "Downloading $($tool.Name) from $($tool.Url)"
+            try {
+              Invoke-WebRequest -Uri $tool.Url -OutFile $tool.Path -UseBasicParsing -ErrorAction Stop
+              Unblock-File -Path $tool.Path -ErrorAction SilentlyContinue
+              $item = Get-Item -Path $tool.Path -ErrorAction Stop
+              Write-Output ("Downloaded {0}: {1} bytes -> {2}" -f $tool.Name, $item.Length, $item.FullName)
+            } catch {
+              Write-Output "ERROR: Download failed for $($tool.Name): $($_.Exception.Message)"
+            }
+          }
+
+          Get-ChildItem -Path $attackDir -Force |
+            Select-Object Name,Length,LastWriteTime |
+            Format-Table -AutoSize |
+            Out-String -Width 200

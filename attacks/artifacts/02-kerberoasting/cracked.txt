@@ -1,0 +1,4 @@
+svc_mssql@SEVENKINGDOMS.LOCAL:Password123!
+svc_web@SEVENKINGDOMS.LOCAL:Password123!
+svc_cifs@SEVENKINGDOMS.LOCAL:Password123!
+svc_ldap@NORTH.SEVENKINGDOMS.LOCAL:Password123!

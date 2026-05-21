@@ -1,0 +1,16 @@
+---
+- name: Set TRUSTED_FOR_DELEGATION on delegation abuse users
+  ansible.windows.win_command:
+    argv:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - "{{ lab_guest_provisioning_root }}\\scripts\\set-uac-flags.ps1"
+      - -Domains
+      - "{{ lab_domain_name }}"
+      - -Mode
+      - Delegation
+  register: delegation_accounts_result
+  changed_when: true

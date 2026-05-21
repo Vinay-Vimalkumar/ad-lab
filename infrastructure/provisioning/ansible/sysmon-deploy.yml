@@ -1,0 +1,109 @@
+---
+- name: Deploy and validate Sysmon for AD lab detections
+  hosts: windows
+  gather_facts: false
+  vars:
+    sysmon_root: C:\ProgramData\Sysmon
+    sysmon_zip: C:\ProgramData\Sysmon\Sysmon.zip
+    sysmon_config: C:\ProgramData\Sysmon\sysmon-config.xml
+    sysmon_exe: C:\ProgramData\Sysmon\Sysmon64.exe
+  tasks:
+    - name: Create Sysmon staging directory
+      ansible.windows.win_file:
+        path: "{{ sysmon_root }}"
+        state: directory
+
+    - name: Copy Sysmon archive from controller
+      ansible.windows.win_copy:
+        src: files/sysmon/Sysmon.zip
+        dest: "{{ sysmon_zip }}"
+
+    - name: Copy AD lab Sysmon config
+      ansible.windows.win_copy:
+        src: files/sysmon/sysmon-config.xml
+        dest: "{{ sysmon_config }}"
+
+    - name: Extract Sysmon archive
+      ansible.windows.win_powershell:
+        parameters:
+          ZipPath: "{{ sysmon_zip }}"
+          Destination: "{{ sysmon_root }}"
+        script: |
+          param(
+            [string]$ZipPath,
+            [string]$Destination
+          )
+
+          $ErrorActionPreference = "Stop"
+          Expand-Archive -Path $ZipPath -DestinationPath $Destination -Force
+
+    - name: Install or update Sysmon with AD lab config
+      ansible.windows.win_powershell:
+        parameters:
+          SysmonExe: "{{ sysmon_exe }}"
+          SysmonConfig: "{{ sysmon_config }}"
+        script: |
+          param(
+            [string]$SysmonExe,
+            [string]$SysmonConfig
+          )
+
+          $ErrorActionPreference = "Stop"
+          $signature = Get-AuthenticodeSignature -FilePath $SysmonExe
+          if ($signature.Status -ne "Valid") {
+            throw "Sysmon64.exe Authenticode signature is $($signature.Status)"
+          }
+
+          $service = Get-Service -Name Sysmon64 -ErrorAction SilentlyContinue
+          if ($service) {
+            $arguments = @("-c", $SysmonConfig)
+          } else {
+            $arguments = @("-accepteula", "-i", $SysmonConfig)
+          }
+
+          $process = Start-Process `
+            -FilePath $SysmonExe `
+            -ArgumentList $arguments `
+            -Wait `
+            -PassThru `
+            -NoNewWindow
+
+          if ($process.ExitCode -ne 0) {
+            throw "Sysmon64.exe exited with code $($process.ExitCode)"
+          }
+
+    - name: Verify Sysmon service and recent operational events
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = "Stop"
+          $service = Get-Service -Name Sysmon64
+          if ($service.Status -ne "Running") {
+            throw "Sysmon64 service is $($service.Status)"
+          }
+
+          Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5 |
+            Select-Object TimeCreated, Id, ProviderName, MachineName
+
+    - name: Generate high-signal process creation baseline event
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = "Stop"
+          $marker = "SharpHound-baseline-$env:COMPUTERNAME-$(Get-Date -Format yyyyMMddHHmmss)"
+          $process = Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" `
+            -ArgumentList "/c echo $marker" `
+            -PassThru `
+            -WindowStyle Hidden
+          $process.WaitForExit()
+          Start-Sleep -Seconds 3
+
+          $event = Get-WinEvent -FilterHashtable @{
+            LogName = "Microsoft-Windows-Sysmon/Operational"
+            Id = 1
+            StartTime = (Get-Date).AddMinutes(-5)
+          } | Where-Object { $_.Message -like "*$marker*" } | Select-Object -First 1
+
+          if (-not $event) {
+            throw "Did not find Sysmon Event ID 1 baseline marker $marker"
+          }
+
+          $event | Select-Object TimeCreated, Id, ProviderName, MachineName

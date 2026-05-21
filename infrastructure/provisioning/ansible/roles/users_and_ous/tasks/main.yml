@@ -1,0 +1,17 @@
+---
+- name: Create OUs, department groups, users, and Domain Admin memberships
+  ansible.windows.win_command:
+    argv:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - "{{ lab_guest_provisioning_root }}\\scripts\\create-users.ps1"
+      - -Domains
+      - "{{ lab_domain_name }}"
+      - -LabPassword
+      - "{{ lab_default_user_password }}"
+  register: users_and_ous_result
+  changed_when: true
+  no_log: true

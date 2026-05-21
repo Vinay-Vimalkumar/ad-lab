@@ -1,0 +1,210 @@
+---
+- name: Install AD DS and DNS on child domain controller
+  ansible.windows.win_feature:
+    name:
+      - AD-Domain-Services
+      - DNS
+      - GPMC
+    include_management_tools: true
+    include_sub_features: true
+    state: present
+  register: child_domain_features
+
+- name: Reboot after child DC feature install
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ lab_reboot_timeout }}"
+  when: child_domain_features.reboot_required | default(false)
+
+- name: Point child DC at the root DC before promotion
+  ansible.windows.win_dns_client:
+    adapter_names: "*"
+    dns_servers:
+      - "{{ lab_root_dc_ip }}"
+
+- name: Create north.sevenkingdoms.local child domain
+  ansible.windows.win_powershell:
+    parameters:
+      ChildLabel: "{{ lab_child_label }}"
+      ChildDomain: "{{ lab_child_domain }}"
+      ChildNetbios: "{{ lab_child_netbios }}"
+      ParentDomain: "{{ lab_root_domain }}"
+      ParentNetbios: "{{ lab_root_netbios }}"
+      AdminUser: "{{ lab_domain_admin_user }}"
+      AdminPassword: "{{ lab_domain_admin_password }}"
+      SafeModePassword: "{{ lab_safe_mode_password }}"
+    script: |
+      param(
+        [string]$ChildLabel,
+        [string]$ChildDomain,
+        [string]$ChildNetbios,
+        [string]$ParentDomain,
+        [string]$ParentNetbios,
+        [string]$AdminUser,
+        [string]$AdminPassword,
+        [string]$SafeModePassword
+      )
+
+      $ErrorActionPreference = "Stop"
+      $currentDomain = (Get-CimInstance Win32_ComputerSystem).Domain
+      try {
+        Import-Module ActiveDirectory -ErrorAction Stop
+        $existingDomain = Get-ADDomain -Identity $ChildDomain -ErrorAction Stop
+        if ($existingDomain.DNSRoot -ieq $ChildDomain) {
+          Write-Output "changed=False"
+          exit 0
+        }
+      } catch {
+        Write-Verbose "Child domain lookup failed; promotion may still be required."
+      }
+
+      if ($currentDomain -ieq $ChildDomain) {
+        Write-Output "changed=False"
+        exit 0
+      }
+
+      Import-Module ADDSDeployment
+      $adminSecure = ConvertTo-SecureString $AdminPassword -AsPlainText -Force
+      $safeModeSecure = ConvertTo-SecureString $SafeModePassword -AsPlainText -Force
+      $credential = [pscredential]::new("$ParentNetbios\$AdminUser", $adminSecure)
+
+      Install-ADDSDomain `
+        -NewDomainName $ChildLabel `
+        -ParentDomainName $ParentDomain `
+        -DomainType ChildDomain `
+        -NewDomainNetbiosName $ChildNetbios `
+        -Credential $credential `
+        -SafeModeAdministratorPassword $safeModeSecure `
+        -InstallDns `
+        -NoRebootOnCompletion:$true `
+        -Force
+
+      Write-Output "changed=True"
+      exit 3010
+  register: child_domain_create
+  failed_when: child_domain_create.rc not in [0, 3010]
+  changed_when: child_domain_create.rc == 3010 or 'changed=True' in (child_domain_create.output | join(''))
+  no_log: true
+
+- name: Reboot after child domain promotion
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ lab_reboot_timeout }}"
+  when: child_domain_create.rc == 3010
+
+- name: Reset connection after child domain promotion
+  ansible.builtin.meta: reset_connection
+
+- name: Ensure child DC uses local DNS first
+  ansible.windows.win_dns_client:
+    adapter_names: "*"
+    dns_servers:
+      - 127.0.0.1
+      - "{{ lab_root_dc_ip }}"
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+
+- name: Pin child DC DNS registration to host-only lab address
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+      $labIp = "{{ lab_child_dc_ip }}"
+      $hostName = "{{ inventory_hostname }}"
+      $zones = @("{{ lab_child_domain }}", "_msdcs.{{ lab_root_domain }}")
+
+      $labIf = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $labIp -ErrorAction Stop |
+        Select-Object -First 1 -ExpandProperty InterfaceIndex
+      Get-DnsClient | ForEach-Object {
+        Set-DnsClient `
+          -InterfaceIndex $_.InterfaceIndex `
+          -RegisterThisConnectionsAddress ($_.InterfaceIndex -eq $labIf) `
+          -ErrorAction SilentlyContinue
+      }
+
+      foreach ($zone in $zones) {
+        if (-not (Get-DnsServerZone -Name $zone -ErrorAction SilentlyContinue)) {
+          continue
+        }
+        foreach ($type in @("A", "AAAA")) {
+          $records = Get-DnsServerResourceRecord -ZoneName $zone -RRType $type -ErrorAction SilentlyContinue |
+            Where-Object { $_.HostName -ieq $hostName }
+          foreach ($record in $records) {
+            $keep = $false
+            if ($type -eq "A" -and $record.RecordData.IPv4Address.IPAddressToString -eq $labIp) {
+              $keep = $true
+            }
+            if (-not $keep) {
+              Remove-DnsServerResourceRecord `
+                -ZoneName $zone `
+                -InputObject $record `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+          }
+        }
+      }
+
+      Restart-Service Netlogon -Force
+      ipconfig /registerdns | Out-Null
+      nltest /dsregdns | Out-Null
+  changed_when: false
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+
+- name: Ensure child lab domain admin exists
+  ansible.windows.win_powershell:
+    parameters:
+      UserName: "{{ lab_domain_admin_user }}"
+      Password: "{{ lab_domain_admin_password }}"
+      DomainName: "{{ lab_child_domain }}"
+      DomainDn: "{{ lab_child_dn }}"
+    script: |
+      param(
+        [string]$UserName,
+        [string]$Password,
+        [string]$DomainName,
+        [string]$DomainDn
+      )
+
+      $ErrorActionPreference = "Stop"
+      Import-Module ActiveDirectory
+      $changed = $false
+      $secure = ConvertTo-SecureString $Password -AsPlainText -Force
+      $user = Get-ADUser -Identity $UserName -ErrorAction SilentlyContinue
+
+      if (-not $user) {
+        New-ADUser `
+          -Name "AD Lab Administrator" `
+          -SamAccountName $UserName `
+          -UserPrincipalName "$UserName@$DomainName" `
+          -Path "CN=Users,$DomainDn" `
+          -AccountPassword $secure `
+          -Enabled $true `
+          -PasswordNeverExpires $true
+        $changed = $true
+      } else {
+        Set-ADAccountPassword -Identity $UserName -Reset -NewPassword $secure
+        Set-ADUser `
+          -Identity $UserName `
+          -UserPrincipalName "$UserName@$DomainName" `
+          -Enabled $true `
+          -PasswordNeverExpires $true
+      }
+
+      $user = Get-ADUser -Identity $UserName -ErrorAction Stop
+      $groupDn = "CN=Domain Admins,CN=Users,$DomainDn"
+      $group = [ADSI]("LDAP://" + $groupDn)
+      $member = @($group.member) | Where-Object { $_ -ieq $user.DistinguishedName }
+      if (-not $member) {
+        $group.Add("LDAP://" + $user.DistinguishedName)
+        $group.CommitChanges()
+        $changed = $true
+      }
+
+      Write-Output "changed=$changed"
+  register: child_domain_admin
+  changed_when: "'changed=True' in (child_domain_admin.output | join(''))"
+  no_log: true
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"

@@ -1,0 +1,10 @@
+---
+- name: Create intentionally vulnerable ACL attack paths
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    & "{{ lab_guest_provisioning_root }}\scripts\create-acl-paths.ps1" `
+      -Domains @("{{ lab_root_domain }}", "{{ lab_child_domain }}") `
+      -PrimaryDomain "{{ lab_root_domain }}"
+  register: acl_misconfigurations_result
+  changed_when: true
+  when: inventory_hostname == "kingslanding"

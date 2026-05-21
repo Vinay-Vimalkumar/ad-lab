@@ -1,0 +1,109 @@
+---
+- name: Set lab hostname
+  ansible.windows.win_hostname:
+    name: "{{ lab_hostname | default(inventory_hostname | upper) }}"
+  register: common_hostname
+
+- name: Reboot after hostname change
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ lab_reboot_timeout }}"
+  when: common_hostname.reboot_required | default(false)
+
+- name: Configure host-only DNS resolvers
+  ansible.windows.win_dns_client:
+    adapter_names: "*"
+    dns_servers: "{{ lab_dns_servers }}"
+  when: lab_dns_servers is defined
+
+- name: Restrict dynamic DNS registration to the host-only lab adapter
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+      $labPrefix = "192.168.56."
+      $labAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like "$labPrefix*" } |
+        Select-Object -ExpandProperty InterfaceIndex -Unique
+
+      foreach ($client in Get-DnsClient) {
+        $register = $labAdapters -contains $client.InterfaceIndex
+        Set-DnsClient `
+          -InterfaceIndex $client.InterfaceIndex `
+          -RegisterThisConnectionsAddress $register `
+          -ErrorAction SilentlyContinue
+      }
+  changed_when: false
+
+- name: Create lab provisioning script directory
+  ansible.windows.win_file:
+    path: "{{ lab_guest_provisioning_root }}\\scripts"
+    state: directory
+
+- name: Copy lab provisioning scripts to guest
+  ansible.windows.win_copy:
+    src: "/vagrant/provisioning/scripts/{{ item }}"
+    dest: "{{ lab_guest_provisioning_root }}\\scripts\\{{ item }}"
+  loop:
+    - create-users.ps1
+    - create-service-accounts.ps1
+    - set-uac-flags.ps1
+    - apply-vulnerable-gpos.ps1
+    - create-acl-paths.ps1
+
+- name: Keep lab WinRM and private network posture enabled
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+
+      $labAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -like "192.168.56.*" } |
+        Select-Object -ExpandProperty InterfaceIndex -Unique
+
+      foreach ($adapter in $labAdapters) {
+        Set-NetConnectionProfile -InterfaceIndex $adapter -NetworkCategory Private -ErrorAction SilentlyContinue
+      }
+
+      # LAB-ONLY INSECURITY: PSRemoting is kept enabled for Ansible control
+      # across promotion reboots and domain joins.
+      Enable-PSRemoting -Force -SkipNetworkProfileCheck
+      Set-Service -Name WinRM -StartupType Automatic
+      Start-Service -Name WinRM
+
+      # LAB-ONLY INSECURITY: HTTP/5985 listener is intentional on the
+      # VirtualBox host-only network for lab provisioning.
+      $httpListener = Get-ChildItem WSMan:\localhost\Listener -ErrorAction SilentlyContinue |
+        Where-Object { $_.Keys -contains "Transport=HTTP" }
+      if (-not $httpListener) {
+        New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force | Out-Null
+      }
+
+      # LAB-ONLY INSECURITY: Basic, CredSSP, and unencrypted transport are
+      # enabled so Ansible can bootstrap the intentionally weak AD lab.
+      Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+      Set-Item -Path WSMan:\localhost\Service\Auth\CredSSP -Value $true
+      Set-Item -Path WSMan:\localhost\Client\Auth\CredSSP -Value $true
+      Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+      Set-Item -Path WSMan:\localhost\Client\AllowUnencrypted -Value $true
+      Enable-WSManCredSSP -Role Server -Force
+
+      try {
+        Enable-WSManCredSSP -Role Client -DelegateComputer "*" -Force
+      } catch {
+        Write-Warning "CredSSP client delegation was not changed."
+      }
+
+      # LAB-ONLY INSECURITY: permit WinRM on Private-profile host-only links.
+      if (-not (Get-NetFirewallRule -DisplayName "AD Lab WinRM HTTP 5985 (Private only)" -ErrorAction SilentlyContinue)) {
+        New-NetFirewallRule `
+          -DisplayName "AD Lab WinRM HTTP 5985 (Private only)" `
+          -Direction Inbound `
+          -Protocol TCP `
+          -LocalPort {{ lab_winrm_http_port }} `
+          -Action Allow `
+          -Profile Private | Out-Null
+      }
+
+      # LAB-ONLY INSECURITY: only the Private firewall profile is disabled, and
+      # the Vagrant host-only network is forced to Private above. This lab is not
+      # intended for bridged, public, or production networks.
+      Set-NetFirewallProfile -Profile Private -Enabled False
+  changed_when: false

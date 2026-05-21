@@ -1,0 +1,27 @@
+title: AS-REP Roasting Pre-Authentication Disabled TGT Request
+id: 395757e5-5dc9-418a-b537-6318e5363884
+status: experimental
+description: Detects Kerberos TGT requests where pre-authentication was not required, matching the KQL 4768 AS-REP roasting detection.
+references:
+  - /attacks/03-asrep-roasting.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.t1558.004
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_no_preauth:
+    EventID: 4768
+    PreAuthType: 0
+    TicketEncryptionType:
+      - '0x17'
+      - '0x18'
+  filter_machine_accounts:
+    TargetUserName|endswith: '$'
+  condition: selection_no_preauth and not filter_machine_accounts
+falsepositives:
+  - Legacy Kerberos interop accounts that intentionally disable pre-authentication.
+level: high

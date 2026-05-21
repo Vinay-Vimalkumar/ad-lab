@@ -1,0 +1,296 @@
+# frozen_string_literal: true
+
+# GOAD-equivalent AD lab infrastructure.
+#
+# Box versions:
+# - Server 2022 Standard 2601.0.0 checked on 2026-05-17.
+# - Windows 10 Enterprise 2511.0.0 checked on 2026-05-17; upstream notes this
+#   Windows 10 22H2 Enterprise box is deprecated, but it is pinned here because
+#   the lab convention explicitly asks for Windows 10 Enterprise.
+
+SERVER_BOX = "gusztavvargadr/windows-server-2022-standard"
+SERVER_BOX_VERSION = "2601.0.0"
+WIN10_BOX = "gusztavvargadr/windows-10"
+WIN10_BOX_VERSION = "2511.0.0"
+ANSIBLE_CONTROL_BOX = "ubuntu/jammy64"
+ANSIBLE_CONTROL_IP = "192.168.56.20"
+
+LAB_VMS = {
+  "kingslanding" => {
+    ip: "192.168.56.10",
+    box: SERVER_BOX,
+    box_version: SERVER_BOX_VERSION,
+    cpus: 4,
+    memory: 4096,
+    role: "WS2022 root DC for sevenkingdoms.local"
+  },
+  "castelblack" => {
+    ip: "192.168.56.11",
+    box: SERVER_BOX,
+    box_version: SERVER_BOX_VERSION,
+    cpus: 2,
+    memory: 3072,
+    role: "WS2022 root-domain member server"
+  },
+  "winterfell" => {
+    ip: "192.168.56.12",
+    box: SERVER_BOX,
+    box_version: SERVER_BOX_VERSION,
+    cpus: 4,
+    memory: 4096,
+    role: "WS2022 child DC for north.sevenkingdoms.local"
+  },
+  "meereen" => {
+    ip: "192.168.56.13",
+    box: SERVER_BOX,
+    box_version: SERVER_BOX_VERSION,
+    cpus: 2,
+    memory: 3072,
+    role: "WS2022 child-domain member server"
+  },
+  "braavos" => {
+    ip: "192.168.56.14",
+    box: WIN10_BOX,
+    box_version: WIN10_BOX_VERSION,
+    cpus: 2,
+    memory: 2048,
+    role: "Windows 10 Enterprise workstation"
+  }
+}.freeze
+
+winrm_user = ENV.fetch("AD_LAB_WINRM_USER", "vagrant")
+winrm_password = ENV["AD_LAB_WINRM_PASSWORD"]
+
+# Password the bootstrap SETS on Administrator/labadmin. The stock box WinRM connect
+# password ("vagrant") is too weak for New-LocalUser complexity, so the account
+# password is decoupled from the connect password and must meet Windows complexity.
+bootstrap_account_password = ENV.fetch("AD_LAB_ACCOUNT_PASSWORD", "Password123!")
+
+vault_args = if ENV["AD_LAB_ANSIBLE_VAULT_ARGS"].to_s.empty?
+               ["--vault-id", "lab@prompt"]
+             else
+               ENV["AD_LAB_ANSIBLE_VAULT_ARGS"].split
+             end
+
+Vagrant.configure("2") do |config|
+  config.vm.boot_timeout = 1800
+  config.vm.graceful_halt_timeout = 600
+
+  config.vm.synced_folder File.expand_path("provisioning", __dir__), "/infrastructure/provisioning"
+
+  LAB_VMS.each do |name, vm|
+    config.vm.define name do |node|
+      node.vm.communicator = "winrm"
+      node.vm.box = vm[:box]
+      node.vm.box_version = vm[:box_version]
+      # The gusztavvargadr/windows-10 box rejects WinRM (auth 401) after Vagrant's
+      # hostname-rename reboot, which aborts provisioning. Skip Vagrant's hostname
+      # step for braavos; Ansible sets the BRAAVOS hostname during provisioning.
+      node.vm.hostname = name unless name == "braavos"
+      node.vm.network "private_network", ip: vm[:ip]
+      node.winrm.username = winrm_user
+      node.winrm.password = winrm_password.to_s
+      node.winrm.transport = :plaintext
+      node.winrm.basic_auth_only = true
+      node.winrm.ssl_peer_verification = false
+      node.winrm.retry_limit = 90
+      node.winrm.retry_delay = 10
+
+      node.vm.provider "virtualbox" do |vb|
+        vb.name = "ad-lab-#{name}"
+        vb.cpus = vm[:cpus]
+        vb.memory = vm[:memory]
+        vb.gui = false
+        vb.customize ["modifyvm", :id, "--description", vm[:role]]
+      end
+
+      node.vm.provision "shell",
+                        name: "bootstrap-winrm-lab-only",
+                        env: { "AD_LAB_BOOTSTRAP_PASSWORD" => bootstrap_account_password },
+                        privileged: true,
+                        powershell_elevated_interactive: false,
+                        inline: <<-POWERSHELL
+          $ErrorActionPreference = "Stop"
+
+          Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope LocalMachine -Force
+
+          $bootstrapPassword = $env:AD_LAB_BOOTSTRAP_PASSWORD
+          if (-not [string]::IsNullOrWhiteSpace($bootstrapPassword)) {
+            $secureBootstrapPassword = ConvertTo-SecureString $bootstrapPassword -AsPlainText -Force
+
+            try {
+              Enable-LocalUser -Name "Administrator" -ErrorAction SilentlyContinue
+              Set-LocalUser -Name "Administrator" -Password $secureBootstrapPassword -ErrorAction SilentlyContinue
+            } catch {
+              Write-Warning "Unable to update built-in Administrator during bootstrap: $_"
+            }
+
+            if (-not (Get-LocalUser -Name "labadmin" -ErrorAction SilentlyContinue)) {
+              New-LocalUser `
+                -Name "labadmin" `
+                -Password $secureBootstrapPassword `
+                -FullName "AD Lab Administrator" `
+                -Description "AD lab bootstrap admin" `
+                -PasswordNeverExpires | Out-Null
+            } else {
+              Set-LocalUser -Name "labadmin" -Password $secureBootstrapPassword
+              Enable-LocalUser -Name "labadmin"
+            }
+
+            $adminMember = Get-LocalGroupMember -Group "Administrators" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match "labadmin$" -or $_.Name -eq "labadmin" }
+            if (-not $adminMember) {
+              Add-LocalGroupMember -Group "Administrators" -Member "labadmin"
+            }
+          }
+
+          $labAdapters = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -like "192.168.56.*" } |
+            Select-Object -ExpandProperty InterfaceIndex -Unique
+
+          foreach ($adapter in $labAdapters) {
+            Set-NetConnectionProfile -InterfaceIndex $adapter -NetworkCategory Private -ErrorAction SilentlyContinue
+          }
+
+          # Set EVERY connection profile to Private (incl. the NAT adapter). On the
+          # Windows 10 box the NAT network is classified Public, which makes the WinRM
+          # firewall/listener step throw "exception will not work ... set to Public"
+          # under ErrorActionPreference=Stop and aborts the bootstrap.
+          Get-NetConnectionProfile -ErrorAction SilentlyContinue | ForEach-Object {
+            Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+          }
+
+          # LAB-ONLY INSECURITY: PSRemoting is enabled broadly so Ansible can
+          # reach freshly cloned Windows guests before domain trust exists.
+          Enable-PSRemoting -Force -SkipNetworkProfileCheck
+          Set-Service -Name WinRM -StartupType Automatic
+          Start-Service -Name WinRM
+
+          # LAB-ONLY INSECURITY: HTTP/5985 is kept available for simple
+          # host-only provisioning traffic; do not expose this lab on bridged
+          # or public networks.
+          $httpListener = Get-ChildItem WSMan:\\localhost\\Listener -ErrorAction SilentlyContinue |
+            Where-Object { $_.Keys -contains "Transport=HTTP" }
+          if (-not $httpListener) {
+            New-Item -Path WSMan:\\localhost\\Listener -Transport HTTP -Address * -Force | Out-Null
+          }
+
+          # LAB-ONLY INSECURITY: Basic, CredSSP, and unencrypted WinRM are
+          # enabled for Ansible compatibility inside the isolated host-only lab.
+          Set-Item -Path WSMan:\\localhost\\Service\\Auth\\Basic -Value $true
+          Set-Item -Path WSMan:\\localhost\\Service\\Auth\\CredSSP -Value $true
+          Set-Item -Path WSMan:\\localhost\\Client\\Auth\\CredSSP -Value $true
+          Set-Item -Path WSMan:\\localhost\\Service\\AllowUnencrypted -Value $true
+          Set-Item -Path WSMan:\\localhost\\Client\\AllowUnencrypted -Value $true
+
+          Enable-WSManCredSSP -Role Server -Force
+          try {
+            Enable-WSManCredSSP -Role Client -DelegateComputer "*" -Force
+          } catch {
+            Write-Warning "CredSSP client delegation will be retried by Ansible if domain policy blocks it during bootstrap."
+          }
+
+          # LAB-ONLY INSECURITY: a Private-profile firewall exception allows
+          # cleartext WinRM from the Vagrant host-only network only.
+          if (-not (Get-NetFirewallRule -DisplayName "AD Lab WinRM HTTP 5985 (Private only)" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule `
+              -DisplayName "AD Lab WinRM HTTP 5985 (Private only)" `
+              -Direction Inbound `
+              -Protocol TCP `
+              -LocalPort 5985 `
+              -Action Allow `
+              -Profile Private | Out-Null
+          }
+
+          # LAB-ONLY INSECURITY: the VirtualBox host-only adapter is marked
+          # Private above, then the Private firewall profile is disabled so AD
+          # attack and detection exercises behave like an intentionally weak lab.
+          # Domain and Public firewall profiles are left untouched.
+          Set-NetFirewallProfile -Profile Private -Enabled False
+        POWERSHELL
+
+      next unless name == "braavos" && ENV["AD_LAB_ENABLE_HOST_ANSIBLE"] == "1"
+
+      node.vm.provision "ansible-site", type: "ansible" do |ansible|
+        ansible.playbook = "provisioning/ansible/site.yml"
+        ansible.inventory_path = "provisioning/ansible/inventory.yml"
+        ansible.config_file = "provisioning/ansible/ansible.cfg"
+        ansible.limit = "all"
+        ansible.raw_arguments = vault_args
+      end
+    end
+  end
+
+  config.vm.define "ansible-control" do |node|
+    node.vm.box = ANSIBLE_CONTROL_BOX
+    node.vm.hostname = "ansible-control"
+    node.vm.network "private_network", ip: ANSIBLE_CONTROL_IP
+    node.vm.synced_folder File.expand_path("provisioning/ansible", __dir__), "/ansible"
+    node.vm.disk :disk, size: "20GB", primary: true
+
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "ad-lab-ansible-control"
+      vb.cpus = 2
+      vb.memory = 2048
+      vb.gui = false
+      vb.customize ["modifyvm", :id, "--description", "Ubuntu 22.04 Ansible control node for AD lab"]
+    end
+
+    node.vm.provision "shell",
+                      name: "install-ansible-control-plane",
+                      privileged: true,
+                      inline: <<-SHELL
+        set -euxo pipefail
+
+        export DEBIAN_FRONTEND=noninteractive
+
+        apt-get update
+        apt-get install -y \
+          ca-certificates \
+          curl \
+          git \
+          python3-pip \
+          python3-venv \
+          software-properties-common \
+          sshpass
+
+        add-apt-repository --yes --update ppa:ansible/ansible
+        apt-get install -y ansible
+
+        python3 -m pip install --upgrade pip
+        python3 -m pip install pywinrm requests-credssp
+
+        ansible-galaxy collection install -r /ansible/collections/requirements.yml -p /ansible/collections
+
+        chown -R vagrant:vagrant /home/vagrant/.ansible || true
+        ansible --version
+      SHELL
+  end
+
+  if ENV["AD_LAB_ENABLE_VAGRANT_BASELINE_SNAPSHOT"] == "1"
+    config.trigger.after :provision do |trigger|
+      trigger.name = "baseline-snapshot"
+      trigger.only_on = "braavos"
+      trigger.info = "Creating VirtualBox baseline snapshots after Ansible provisioning."
+      trigger.ruby do |env, _machine|
+        snapshot_name = ENV.fetch("AD_LAB_BASELINE_SNAPSHOT", "baseline-after-provision")
+        vboxmanage = ENV.fetch("VBOXMANAGE", "VBoxManage")
+
+        LAB_VMS.each_key do |machine_name|
+          target = env.machine(machine_name.to_sym, :virtualbox)
+          next unless target&.id
+
+          system(
+            vboxmanage,
+            "snapshot",
+            target.id,
+            "take",
+            snapshot_name,
+            "--description",
+            "Baseline after AD lab provisioning"
+          )
+        end
+      end
+    end
+  end
+end

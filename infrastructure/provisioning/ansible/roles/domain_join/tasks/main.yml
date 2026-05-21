@@ -1,0 +1,16 @@
+---
+- name: Join host to assigned AD domain
+  microsoft.ad.membership:
+    dns_domain_name: "{{ lab_domain_name }}"
+    domain_admin_user: "{{ lab_domain_netbios }}\\Administrator"
+    domain_admin_password: "{{ lab_domain_admin_password }}"
+    hostname: "{{ lab_hostname | default(inventory_hostname | upper) }}"
+    state: domain
+    reboot: false
+  register: domain_join_result
+  no_log: true
+
+- name: Reboot after domain join
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ lab_reboot_timeout }}"
+  when: domain_join_result.reboot_required | default(false)

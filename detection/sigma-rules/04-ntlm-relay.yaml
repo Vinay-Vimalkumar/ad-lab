@@ -1,0 +1,32 @@
+title: NTLM Relay Fan-Out From Single Source
+id: e02f5563-0202-46c1-a215-b6cd770e1e9e
+status: experimental
+description: Detects NTLM network logons consistent with relayed authentication, aligned to the KQL 4624 LogonType 3 NTLM relay logic.
+references:
+  - /attacks/04-ntlm-relay.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.lateral-movement
+  - attack.t1557.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_ntlm_network:
+    EventID: 4624
+    LogonType: 3
+    AuthenticationPackageName: NTLM
+  filter_noise:
+    TargetUserName:
+      - ANONYMOUS LOGON
+      - SYSTEM
+      - LOCAL SERVICE
+      - NETWORK SERVICE
+  filter_machine_accounts:
+    TargetUserName|endswith: '$'
+  condition: selection_ntlm_network and not 1 of filter_*
+falsepositives:
+  - Known NTLM proxy hosts, scanners, print services, or legacy line-of-business applications.
+level: high

@@ -1,0 +1,32 @@
+title: Golden Ticket Suspected TGS Without Normal TGT Pattern
+id: aaffb29f-5f88-44ab-950c-0d5086b8beee
+status: experimental
+description: Detects suspicious Kerberos service ticket activity used by forged TGTs; correlation should confirm missing preceding 4768 events as in the KQL catalog.
+references:
+  - /attacks/07-golden-ticket.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.t1558.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_tgs:
+    EventID: 4769
+  selection_suspicious_services:
+    ServiceName|contains:
+      - cifs
+      - ldap
+      - host
+  selection_rc4:
+    TicketEncryptionType: '0x17'
+  filter_machine_accounts:
+    TargetUserName|endswith: '$'
+  filter_krbtgt:
+    ServiceName: krbtgt
+  condition: selection_tgs and (selection_suspicious_services or selection_rc4) and not 1 of filter_*
+falsepositives:
+  - Ticket cache window edges, incomplete DC log ingestion, or legacy services requesting RC4.
+level: critical

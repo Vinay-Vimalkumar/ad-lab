@@ -1,0 +1,84 @@
+<Sysmon schemaversion="4.90">
+  <!--
+    AD lab Sysmon profile inspired by the SwiftOnSecurity sysmon-config v76 approach:
+    compact include rules, readable RuleGroup names, and focused high-signal telemetry.
+    Reproducibility reference: SwiftOnSecurity/sysmon-config master commit
+    1836897f12fbd6a0a473665ef6abc34a6b497e31. Layer these AD lab deltas for
+    Event IDs 1, 3, 10, 11, and 22 over a full production baseline when needed.
+  -->
+  <HashAlgorithms>sha256,imphash</HashAlgorithms>
+  <CheckRevocation/>
+  <EventFiltering>
+    <!-- Supports /attacks/01-bloodhound-enumeration.md detection via Sysmon Event 1 for SharpHound and BloodHound collectors. -->
+    <!-- Supports /attacks/02-kerberoasting.md and /attacks/03-asrep-roasting.md detection via Sysmon Event 1 for Rubeus and Impacket GetUserSPNs/GetNPUsers. -->
+    <!-- Supports /attacks/04-ntlm-relay.md and /attacks/05-pass-the-hash.md detection via Sysmon Event 1 for Responder, ntlmrelayx, psexec, smbexec, and Mimikatz tooling. -->
+    <!-- Supports /attacks/06-dcsync.md, /attacks/07-golden-ticket.md, /attacks/08-silver-ticket.md, /attacks/09-unconstrained-delegation.md, and /attacks/10-cross-forest-trust-abuse.md via Mimikatz, secretsdump, Rubeus, and ticket tooling. -->
+    <RuleGroup name="Event ID 1 ProcessCreate AD attack tooling" groupRelation="or">
+      <ProcessCreate onmatch="include">
+        <Image condition="end with">\SharpHound.exe</Image>
+        <Image condition="end with">\AzureHound.exe</Image>
+        <Image condition="end with">\BloodHound.exe</Image>
+        <Image condition="end with">\Rubeus.exe</Image>
+        <Image condition="end with">\mimikatz.exe</Image>
+        <Image condition="end with">\secretsdump.exe</Image>
+        <Image condition="end with">\psexec.exe</Image>
+        <Image condition="end with">\smbexec.exe</Image>
+        <Image condition="end with">\ntlmrelayx.exe</Image>
+        <Image condition="end with">\Responder.exe</Image>
+        <Image condition="end with">\Inveigh.exe</Image>
+        <Image condition="end with">\SpoolSample.exe</Image>
+        <Image condition="end with">\SetSPN.exe</Image>
+        <Image condition="end with">\setspn.exe</Image>
+        <CommandLine condition="contains any">SharpHound;BloodHound;Invoke-BloodHound;CollectionMethod;GetUserSPNs.py;getuserspns.py;GetNPUsers.py;getnpusers.py;kerberoast;asreproast;Rubeus kerberoast;Rubeus asreproast</CommandLine>
+        <CommandLine condition="contains any">sekurlsa::;lsadump::dcsync;kerberos::golden;kerberos::ptt;Rubeus ptt;Rubeus dump;ticketer.py;secretsdump.py;psexec.py;smbexec.py;wmiexec.py</CommandLine>
+        <CommandLine condition="contains any">Responder;Inveigh;ntlmrelayx.py;--delegate-access;--escalate-user;--remove-mic;--no-smb2support;PrinterBug;SpoolSample;dementor.py;MS-RPRN;RpcRemoteFindFirstPrinterChangeNotification</CommandLine>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- Supports /attacks/04-ntlm-relay.md, /attacks/05-pass-the-hash.md, /attacks/06-dcsync.md, and /attacks/09-unconstrained-delegation.md via Kerberos, SMB, LDAP, LDAPS, RPC, and LLMNR network telemetry. -->
+    <RuleGroup name="Event ID 3 NetworkConnect AD relay and directory ports" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <DestinationPort condition="is any">88;135;137;139;389;445;464;593;636;3268;3269;5355</DestinationPort>
+        <Image condition="end with">\ntlmrelayx.exe</Image>
+        <Image condition="end with">\Responder.exe</Image>
+        <Image condition="end with">\Inveigh.exe</Image>
+        <Image condition="end with">\SpoolSample.exe</Image>
+        <DestinationHostname condition="contains any">wpad;proxy;dc;ldap;gc</DestinationHostname>
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- Supports /attacks/05-pass-the-hash.md, /attacks/07-golden-ticket.md, and /attacks/08-silver-ticket.md detection via LSASS access by credential and ticket tooling. -->
+    <RuleGroup name="Event ID 10 ProcessAccess credential access" groupRelation="or">
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="end with">\lsass.exe</TargetImage>
+        <SourceImage condition="end with">\mimikatz.exe</SourceImage>
+        <SourceImage condition="end with">\rubeus.exe</SourceImage>
+        <SourceImage condition="end with">\procdump.exe</SourceImage>
+        <SourceImage condition="end with">\rundll32.exe</SourceImage>
+        <GrantedAccess condition="is any">0x1010;0x1410;0x1438;0x143a;0x1fffff</GrantedAccess>
+      </ProcessAccess>
+    </RuleGroup>
+
+    <!-- Supports /attacks/01-bloodhound-enumeration.md, /attacks/02-kerberoasting.md, /attacks/03-asrep-roasting.md, /attacks/06-dcsync.md, /attacks/07-golden-ticket.md, and /attacks/08-silver-ticket.md through collection, dump, and ticket artifacts. -->
+    <RuleGroup name="Event ID 11 FileCreate credential and collection artifacts" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename condition="contains any">\BloodHound.zip;\SharpHound.zip;BloodHound-\;SharpHound-\</TargetFilename>
+        <TargetFilename condition="end with">.kirbi</TargetFilename>
+        <TargetFilename condition="end with">.ccache</TargetFilename>
+        <TargetFilename condition="end with">.kirbi.b64</TargetFilename>
+        <TargetFilename condition="contains any">\ntds.dit;\SYSTEM.hive;\SECURITY.hive;\SAM.hive</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- Supports /attacks/01-bloodhound-enumeration.md, /attacks/04-ntlm-relay.md, and /attacks/10-cross-forest-trust-abuse.md through AD locator, WPAD, and trust-realm discovery DNS queries. -->
+    <RuleGroup name="Event ID 22 DNSQuery AD discovery and relay indicators" groupRelation="or">
+      <DnsQuery onmatch="include">
+        <QueryName condition="contains any">_ldap._tcp;_kerberos._tcp;_gc._tcp;wpad</QueryName>
+        <Image condition="end with">\SharpHound.exe</Image>
+        <Image condition="end with">\BloodHound.exe</Image>
+        <Image condition="end with">\Responder.exe</Image>
+        <Image condition="end with">\Inveigh.exe</Image>
+      </DnsQuery>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

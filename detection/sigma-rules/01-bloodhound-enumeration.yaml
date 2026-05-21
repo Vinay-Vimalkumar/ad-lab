@@ -1,0 +1,29 @@
+title: BloodHound SharpHound Bulk Directory Enumeration
+id: 5db41ca2-ff63-41aa-9063-35f8ab4271ff
+status: experimental
+description: Detects high-signal Windows directory service reads associated with BloodHound and SharpHound collection, mirroring the Sentinel 4662 and LDAP fan-out logic.
+references:
+  - /attacks/01-bloodhound-enumeration.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.discovery
+  - attack.t1087.002
+  - attack.t1018
+  - attack.t1069.002
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_ds_read:
+    EventID: 4662
+    ObjectServer: DS
+    AccessMask|contains:
+      - '0x100'
+      - '0x10'
+  filter_machine_accounts:
+    SubjectUserName|endswith: '$'
+  condition: selection_ds_read and not filter_machine_accounts
+falsepositives:
+  - Authorized AD health tools, identity governance crawlers, PingCastle, Purple Knight, or sanctioned BloodHound collection.
+level: medium

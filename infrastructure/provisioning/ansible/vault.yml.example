@@ -1,0 +1,6 @@
+---
+# Copy to group_vars/all/vault.yml, then encrypt it with:
+#   ansible-vault encrypt group_vars/all/vault.yml
+#
+# This placeholder is intentionally not a usable password.
+vault_lab_password: "{{LAB_PASSWORD}}"

@@ -1,0 +1,38 @@
+title: Cross-Forest Trust Abuse Foreign Realm Kerberos Activity
+id: 30bf49d9-9bec-4ffc-867a-00f30bc96c31
+status: experimental
+description: Detects foreign-realm Kerberos or logon activity touching privileged services, mirroring the KQL cross-forest trust abuse detection.
+references:
+  - /attacks/10-cross-forest-trust-abuse.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.privilege-escalation
+  - attack.t1134.005
+  - attack.t1558.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_foreign_realm:
+    EventID:
+      - 4768
+      - 4769
+      - 4624
+    TargetDomainName:
+      - SEVENKINGDOMS
+      - NORTH
+      - sevenkingdoms.local
+      - north.sevenkingdoms.local
+  selection_privileged_service:
+    ServiceName|contains:
+      - krbtgt
+      - cifs
+      - ldap
+      - host
+  selection_rc4:
+    TicketEncryptionType: '0x17'
+  condition: selection_foreign_realm and (selection_privileged_service or selection_rc4)
+falsepositives:
+  - Approved cross-forest collaboration, migrations using SID history, or federated resource access.
+level: high

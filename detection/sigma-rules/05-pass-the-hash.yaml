@@ -1,0 +1,37 @@
+title: Pass-the-Hash NTLM Lateral Network Logon
+id: bd221e3e-e6ae-430b-af2a-f85d9cbca8af
+status: experimental
+description: Detects NTLM network or NewCredentials logons used for lateral movement, matching the KQL Pass-the-Hash 4624 logic.
+references:
+  - /attacks/05-pass-the-hash.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.lateral-movement
+  - attack.t1550.002
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_ntlm_logon:
+    EventID: 4624
+    LogonType:
+      - 3
+      - 9
+    AuthenticationPackageName: NTLM
+  selection_logon_process:
+    LogonProcessName|contains:
+      - NtLmSsp
+      - seclogo
+  filter_builtin:
+    TargetUserName:
+      - ANONYMOUS LOGON
+      - SYSTEM
+      - LOCAL SERVICE
+      - NETWORK SERVICE
+  filter_machine_accounts:
+    TargetUserName|endswith: '$'
+  condition: selection_ntlm_logon and selection_logon_process and not 1 of filter_*
+falsepositives:
+  - Authenticated vulnerability scanners, patching tools, or management systems that legitimately use NTLM laterally.
+level: high

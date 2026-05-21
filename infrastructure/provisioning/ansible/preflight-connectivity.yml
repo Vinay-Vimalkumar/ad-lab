@@ -1,0 +1,29 @@
+---
+- name: Verify AD lab inventory and WinRM readiness
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Show resolved Ansible target metadata
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          ansible_host: "{{ ansible_host }}"
+          ansible_port: "{{ ansible_port }}"
+          ansible_connection: "{{ ansible_connection }}"
+          ansible_winrm_transport: "{{ ansible_winrm_transport }}"
+          lab_domain_name: "{{ lab_domain_name }}"
+      tags:
+        - inventory
+
+    - name: Wait briefly for WinRM to be reachable
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ preflight_wait_timeout | default(5) }}"
+        sleep: 1
+      tags:
+        - connectivity
+        - auth
+
+    - name: Verify WinRM authentication with win_ping
+      ansible.windows.win_ping:
+      tags:
+        - auth

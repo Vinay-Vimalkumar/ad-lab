@@ -1,0 +1,161 @@
+---
+- name: Install AD DS and DNS on root domain controller
+  ansible.windows.win_feature:
+    name:
+      - AD-Domain-Services
+      - DNS
+      - GPMC
+    include_management_tools: true
+    include_sub_features: true
+    state: present
+  register: forest_root_features
+
+- name: Reboot after root DC feature install
+  ansible.windows.win_reboot:
+    reboot_timeout: "{{ lab_reboot_timeout }}"
+  when: forest_root_features.reboot_required | default(false)
+
+- name: Check whether sevenkingdoms.local is already promoted
+  ansible.windows.win_powershell:
+    parameters:
+      DomainName: "{{ lab_root_domain }}"
+    script: |
+      param([string]$DomainName)
+
+      $ErrorActionPreference = "Stop"
+      try {
+        Import-Module ActiveDirectory -ErrorAction Stop
+        $domain = Get-ADDomain -Identity $DomainName -ErrorAction Stop
+        if ($domain.DNSRoot -ieq $DomainName) {
+          Write-Output "exists=True"
+          exit 0
+        }
+      } catch {
+        Write-Output "exists=False"
+        exit 0
+      }
+  register: forest_root_check
+  changed_when: false
+
+- name: Create sevenkingdoms.local root forest
+  microsoft.ad.domain:
+    dns_domain_name: "{{ lab_root_domain }}"
+    domain_netbios_name: "{{ lab_root_netbios }}"
+    safe_mode_password: "{{ lab_safe_mode_password }}"
+    forest_mode: "{{ lab_forest_mode }}"
+    domain_mode: "{{ lab_domain_mode }}"
+    reboot: true
+  register: forest_root_domain
+  no_log: true
+  when: "'exists=True' not in (forest_root_check.output | join(''))"
+
+- name: Reset connection after root forest promotion
+  ansible.builtin.meta: reset_connection
+
+- name: Ensure root DC uses local DNS first
+  ansible.windows.win_dns_client:
+    adapter_names: "*"
+    dns_servers:
+      - 127.0.0.1
+      - "{{ lab_root_dc_ip }}"
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+
+- name: Pin root DC DNS registration to host-only lab address
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+      $labIp = "{{ lab_root_dc_ip }}"
+      $hostName = "{{ inventory_hostname }}"
+      $zones = @("{{ lab_root_domain }}", "_msdcs.{{ lab_root_domain }}")
+
+      $labIf = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $labIp -ErrorAction Stop |
+        Select-Object -First 1 -ExpandProperty InterfaceIndex
+      Get-DnsClient | ForEach-Object {
+        Set-DnsClient `
+          -InterfaceIndex $_.InterfaceIndex `
+          -RegisterThisConnectionsAddress ($_.InterfaceIndex -eq $labIf) `
+          -ErrorAction SilentlyContinue
+      }
+
+      foreach ($zone in $zones) {
+        if (-not (Get-DnsServerZone -Name $zone -ErrorAction SilentlyContinue)) {
+          continue
+        }
+        foreach ($type in @("A", "AAAA")) {
+          $records = Get-DnsServerResourceRecord -ZoneName $zone -RRType $type -ErrorAction SilentlyContinue |
+            Where-Object { $_.HostName -ieq $hostName }
+          foreach ($record in $records) {
+            $keep = $false
+            if ($type -eq "A" -and $record.RecordData.IPv4Address.IPAddressToString -eq $labIp) {
+              $keep = $true
+            }
+            if (-not $keep) {
+              Remove-DnsServerResourceRecord `
+                -ZoneName $zone `
+                -InputObject $record `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+          }
+        }
+      }
+
+      Restart-Service Netlogon -Force
+      ipconfig /registerdns | Out-Null
+      nltest /dsregdns | Out-Null
+  changed_when: false
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"
+
+- name: Ensure root lab domain admin exists
+  ansible.windows.win_powershell:
+    parameters:
+      UserName: "{{ lab_domain_admin_user }}"
+      Password: "{{ lab_domain_admin_password }}"
+      DomainName: "{{ lab_root_domain }}"
+      DomainDn: "{{ lab_root_dn }}"
+    script: |
+      param(
+        [string]$UserName,
+        [string]$Password,
+        [string]$DomainName,
+        [string]$DomainDn
+      )
+
+      $ErrorActionPreference = "Stop"
+      Import-Module ActiveDirectory
+      $changed = $false
+      $secure = ConvertTo-SecureString $Password -AsPlainText -Force
+      $user = Get-ADUser -Filter "SamAccountName -eq '$UserName'" -ErrorAction SilentlyContinue
+
+      if (-not $user) {
+        New-ADUser `
+          -Name "AD Lab Administrator" `
+          -SamAccountName $UserName `
+          -UserPrincipalName "$UserName@$DomainName" `
+          -Path "CN=Users,$DomainDn" `
+          -AccountPassword $secure `
+          -Enabled $true `
+          -PasswordNeverExpires $true
+        $changed = $true
+      }
+
+      foreach ($group in @("Domain Admins", "Enterprise Admins", "Schema Admins")) {
+        $member = Get-ADPrincipalGroupMembership -Identity $UserName |
+          Where-Object { $_.Name -eq $group }
+        if (-not $member) {
+          Add-ADGroupMember -Identity $group -Members $UserName
+          $changed = $true
+        }
+      }
+
+      Write-Output "changed=$changed"
+  register: forest_root_admin
+  changed_when: "'changed=True' in (forest_root_admin.output | join(''))"
+  no_log: true
+  vars:
+    ansible_user: Administrator
+    ansible_password: "{{ lab_domain_admin_password }}"

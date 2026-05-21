@@ -1,0 +1,16 @@
+---
+- name: Set DONT_REQ_PREAUTH on AS-REP roastable users
+  ansible.windows.win_command:
+    argv:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -File
+      - "{{ lab_guest_provisioning_root }}\\scripts\\set-uac-flags.ps1"
+      - -Domains
+      - "{{ lab_domain_name }}"
+      - -Mode
+      - Asrep
+  register: asrep_accounts_result
+  changed_when: true

@@ -1,0 +1,31 @@
+title: Silver Ticket Kerberos Service Logon Without KDC Corroboration
+id: e7cc5a67-50f2-44da-8be1-5ae963e54c94
+status: experimental
+description: Detects Kerberos network logons to services that should be correlated with missing KDC 4769 events, following the KQL Silver Ticket logic.
+references:
+  - /attacks/08-silver-ticket.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.credential-access
+  - attack.t1558.002
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_kerberos_network:
+    EventID: 4624
+    LogonType: 3
+    AuthenticationPackageName: Kerberos
+  filter_builtin:
+    TargetUserName:
+      - ANONYMOUS LOGON
+      - SYSTEM
+      - LOCAL SERVICE
+      - NETWORK SERVICE
+  filter_machine_accounts:
+    TargetUserName|endswith: '$'
+  condition: selection_kerberos_network and not 1 of filter_*
+falsepositives:
+  - Delayed or incomplete DC 4769 ingestion, multi-DC log gaps, and clock skew.
+level: high

@@ -1,0 +1,31 @@
+title: Unconstrained Delegation Coerced Machine Account Kerberos Logon
+id: f4cddc1e-7927-4e99-bb57-40fbdeb93f0b
+status: experimental
+description: Detects machine-account Kerberos logons to delegation-capable hosts, matching the KQL unconstrained delegation abuse pattern.
+references:
+  - /attacks/09-unconstrained-delegation.md
+author: Vinaykarthik Vimalkumar
+date: 2026-05-17
+tags:
+  - attack.lateral-movement
+  - attack.t1550.003
+  - attack.t1187
+logsource:
+  product: windows
+  service: security
+detection:
+  selection_machine_kerberos:
+    EventID: 4624
+    LogonType: 3
+    AuthenticationPackageName: Kerberos
+    TargetUserName|endswith: '$'
+  selection_lab_delegation_hosts:
+    Computer|contains:
+      - castelblack
+      - meereen
+      - WEB01
+      - APP01
+  condition: selection_machine_kerberos and selection_lab_delegation_hosts
+falsepositives:
+  - Backup, clustering, DFS, or application traffic where machine accounts legitimately authenticate to delegation-enabled servers.
+level: high
